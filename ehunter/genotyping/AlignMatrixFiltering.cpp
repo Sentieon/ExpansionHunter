@@ -28,7 +28,6 @@ namespace strgt
 
 void filter(AlignMatrix& aligns)
 {
-    assert(aligns.numReads() % 2 == 0);
     int numStrReads = 0;
     int numStrReadsWithIndels = 0;
     int longestStrSize = 0;
@@ -66,23 +65,19 @@ void filter(AlignMatrix& aligns)
         return;
     }
 
-    for (int readIndex = aligns.numReads() - 1; readIndex != -1; --readIndex)
+    // Remove every fragment (read pair or single read) containing a read whose best alignment has indels
+    for (int fragIndex = aligns.numFrags() - 1; fragIndex != -1; --fragIndex)
     {
-        if (aligns.getBestAlign(readIndex).numIndels() == 0)
+        bool hasIndels = false;
+        const int firstRow = aligns.fragFirstRow(fragIndex);
+        for (int readIndex = firstRow; readIndex != firstRow + aligns.fragSize(fragIndex); ++readIndex)
         {
-            continue;
+            hasIndels = hasIndels || (aligns.getBestAlign(readIndex).numIndels() > 0);
         }
 
-        if (readIndex % 2 == 0)
+        if (hasIndels)
         {
-            aligns.remove(readIndex + 1);
-            aligns.remove(readIndex);
-        }
-        else
-        {
-            aligns.remove(readIndex);
-            aligns.remove(readIndex - 1);
-            --readIndex;
+            aligns.removeFrag(fragIndex);
         }
     }
 }

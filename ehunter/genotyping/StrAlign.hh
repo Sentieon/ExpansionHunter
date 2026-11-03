@@ -19,9 +19,13 @@
 //
 //
 
+#include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <limits>
 #include <ostream>
+#include <stdexcept>
+#include <string>
 
 #include "graphalign/GraphAlignment.hh"
 
@@ -56,13 +60,18 @@ public:
         }
     }
 
+    // Largest motif count that can be represented
+    static constexpr int kMaxNumMotifs = std::numeric_limits<uint16_t>::max();
+
+    // The indel count is only used to detect alignments with indels and to order alignments, so counts exceeding the
+    // storage range (possible for long reads, never for short reads) saturate at the largest representable value
     StrAlign(Type type, int numMotifs, int score, int numIndels)
         : type_(type)
-        , numIndels_(numIndels)
+        , numIndels_(static_cast<uint8_t>(std::min<int>(numIndels, std::numeric_limits<uint8_t>::max())))
         , numMotifs_(numMotifs)
         , score_(score)
     {
-        if ((numIndels < 0) or (numIndels > std::numeric_limits<decltype(numIndels_)>::max()))
+        if (numIndels < 0)
         {
             throw std::runtime_error("numIndels out of range: " + std::to_string(numIndels));
         }
@@ -114,7 +123,8 @@ private:
     Type type_;
     uint8_t numIndels_;
     uint16_t numMotifs_;
-    int16_t score_;
+    // 32 bits: alignment scores of long reads (5 per matching base) exceed the 16-bit range
+    int32_t score_;
 };
 
 std::ostream& operator<<(std::ostream& out, StrAlign::Type type);

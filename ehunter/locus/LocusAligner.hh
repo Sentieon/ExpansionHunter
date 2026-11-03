@@ -59,6 +59,8 @@ private:
     graphtools::GappedGraphAligner aligner_;
     OrientationPredictor orientationPredictor_;
     AlignWriterPtr writer_;
+    ReadMode readMode_;
+    int minSingletonMapq_;
 };
 
 }

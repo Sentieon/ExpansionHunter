@@ -218,11 +218,28 @@ RegionCatalog loadLocusCatalogFromDisk(
 
     RegionCatalog catalog;
     catalog.reserve(catalogJson.size());
+    int numSkippedLoci = 0;
     for (auto& locusJson : catalogJson)
     {
         LocusDescriptionFromUser userDescription = loadUserDescription(locusJson, reference.contigInfo());
-        LocusSpecification locusSpec = decodeLocusSpecification(userDescription, reference, heuristicParams);
-        catalog.emplace_back(std::move(locusSpec));
+        try
+        {
+            LocusSpecification locusSpec = decodeLocusSpecification(userDescription, reference, heuristicParams);
+            catalog.emplace_back(std::move(locusSpec));
+        }
+        catch (const FlanksWithNsError& e)
+        {
+            // Loci in regions masked with N in the reference (for example GRC exclusions) cannot be analyzed
+            spdlog::warn("Skipping locus: {}", e.what());
+            ++numSkippedLoci;
+        }
+    }
+
+    if (numSkippedLoci > 0)
+    {
+        spdlog::warn(
+            "Skipped {} of {} loci because their flanks contain Ns in the reference", numSkippedLoci,
+            catalogJson.size());
     }
 
     return catalog;

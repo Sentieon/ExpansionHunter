@@ -30,6 +30,9 @@ extern "C"
 #include "htslib/sam.h"
 }
 
+#include <boost/optional.hpp>
+
+#include "core/GenomicRegion.hh"
 #include "core/Read.hh"
 #include "core/ReferenceContigInfo.hh"
 
@@ -62,6 +65,8 @@ public:
 
     int32_t currentReadContigId() const { return htsAlignmentPtr_->core.tid; }
     hts_pos_t currentReadPosition() const { return htsAlignmentPtr_->core.pos; }
+    hts_pos_t currentReadEndPosition() const { return bam_endpos(htsAlignmentPtr_); }
+    std::vector<uint32_t> currentCigar() const;
     int32_t currentReadLength() const;
     int32_t currentMateContigId() const { return htsAlignmentPtr_->core.mtid; }
     hts_pos_t currentMatePosition() const { return htsAlignmentPtr_->core.mpos; }
@@ -71,6 +76,8 @@ public:
     bool isStreamingAlignedReads() const;
 
     Read decodeRead() const;
+    // Decodes the current read restricted to the part of its alignment overlapping the region (see clipReadToRegion)
+    boost::optional<Read> decodeReadClippedTo(const GenomicRegion& region, int32_t maxLength) const;
 
 private:
     enum class Status

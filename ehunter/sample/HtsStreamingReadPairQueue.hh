@@ -64,7 +64,7 @@ public:
         locus::RegionType regionType;
         AnalyzerInputType inputType;
         Read read;
-        Read mate;
+        boost::optional<Read> mate; // none for reads without a mate
     };
 
     /// \brief Insert a new read pair into the \p locusIndex queue

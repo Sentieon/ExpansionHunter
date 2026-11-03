@@ -37,28 +37,38 @@ namespace strgt
 class FragLogliks
 {
 public:
-    FragLogliks(int motifLen, int readLen, int fragLen, const AlignMatrix* alignMatrixPtr)
+    /// \param[in] stutterRate Probability that a read reports one motif more (or one motif fewer) than the allele
+    /// that it originated from; zero disables the stutter model
+    FragLogliks(int motifLen, int readLen, int fragLen, const AlignMatrix* alignMatrixPtr, double stutterRate = 0.0)
         : motifLen_(motifLen)
         , readLen_(readLen)
         , fragLen_(fragLen)
+        , stutterRate_(stutterRate)
         , alignMatrix_(*alignMatrixPtr)
     {
-        assert(alignMatrix_.numReads() % 2 == 0);
     }
-    int numFrags() const { return alignMatrix_.numReads() / 2; }
+
+    // Fragments are read pairs or single reads (see AlignMatrix)
+    int numFrags() const { return alignMatrix_.numFrags(); }
     double getLoglik(int fragIndex, int alleleMotifCount);
 
 private:
+    // Likelihood of the fragment without the stutter model
+    double getRawLoglik(int fragIndex, int alleleMotifCount);
+
     using FragIndex = int;
     using FragIndexAndNumMotifs = std::pair<FragIndex, int>;
 
     double computeLoglik(const StrAlign& readAlign, const StrAlign& mateAlign, int alleleMotifCount) const;
+    double computeLoglik(const StrAlign& readAlign, int alleleMotifCount) const;
 
     int motifLen_;
     int readLen_;
     int fragLen_;
+    double stutterRate_;
     const AlignMatrix& alignMatrix_;
     std::unordered_map<FragIndexAndNumMotifs, double> fragLogliksBySize_;
+    std::unordered_map<FragIndexAndNumMotifs, double> rawFragLogliksBySize_;
 };
 
 }

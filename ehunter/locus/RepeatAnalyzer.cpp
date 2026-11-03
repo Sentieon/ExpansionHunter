@@ -57,6 +57,12 @@ void RepeatAnalyzer::processMates(
     alignmentStatsCalculator_.inspect(mateAlignment);
 }
 
+void RepeatAnalyzer::processRead(const Read& /*read*/, const GraphAlignment& readAlignment)
+{
+    alignMatrix_.addSingle(readAlignment);
+    alignmentStatsCalculator_.inspect(readAlignment);
+}
+
 unique_ptr<VariantFindings> RepeatAnalyzer::analyze(const LocusStats& stats)
 {
     optional<RepeatGenotype> repeatGenotype = boost::none;
@@ -89,12 +95,20 @@ unique_ptr<VariantFindings> RepeatAnalyzer::analyze(const LocusStats& stats)
             strgt::addIrrPairsIfPossibleExpansion(maxMotifsInRead, alignMatrix_, countOfInrepeatReadPairs_);
         }
 
+        if (countOfInrepeatReads_)
+        {
+            const int maxMotifsInRead = std::ceil(stats.meanReadLength() / static_cast<double>(repeatUnit_.length()));
+            strgt::addIrrReadsIfPossibleExpansion(
+                maxMotifsInRead, alignMatrix_, countOfInrepeatReads_, repeatUnit_.length());
+        }
+
         countsOfSpanningReads = countAligns(StrAlign::Type::kSpanning, alignMatrix_);
         countsOfFlankingReads = countAligns(StrAlign::Type::kFlanking, alignMatrix_);
         countsOfInrepeatReads = countAligns(StrAlign::Type::kInRepeat, alignMatrix_);
 
         repeatGenotype = strgt::genotype(
-            stats.alleleCount(), repeatUnit_.length(), stats.meanReadLength(), stats.medianFragLength(), alignMatrix_);
+            stats.alleleCount(), repeatUnit_.length(), stats.meanReadLength(), stats.medianFragLength(), alignMatrix_,
+            stutterRate_);
     }
 
     unique_ptr<VariantFindings> variantFindingsPtr(new RepeatFindings(

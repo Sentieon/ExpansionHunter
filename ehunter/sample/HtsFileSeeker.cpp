@@ -158,6 +158,14 @@ Read HtsFileSeeker::decodeRead(LinearAlignmentStats& alignmentStats) const
     return htshelpers::decodeRead(htsAlignmentPtr_);
 }
 
+boost::optional<Read>
+HtsFileSeeker::decodeReadClippedTo(
+    const GenomicRegion& region, int32_t maxLength, LinearAlignmentStats& alignmentStats) const
+{
+    alignmentStats = decodeAlignmentStats(htsAlignmentPtr_);
+    return htshelpers::decodeReadClippedToRegion(htsAlignmentPtr_, region, maxLength);
+}
+
 }
 
 }

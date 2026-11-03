@@ -34,6 +34,8 @@ class GenomeMask
 public:
     void addRegion(int32_t contigId, int64_t start, int64_t stop);
     bool query(int32_t contigId, int64_t pos) const;
+    // True if any position in [start, end) is marked
+    bool queryRange(int32_t contigId, int64_t start, int64_t end) const;
 
 private:
     using contigMask = std::vector<bool>;

@@ -60,6 +60,7 @@ public:
     void processMates(
         const Read& read, const graphtools::GraphAlignment& readAlignment, const Read& mate,
         const graphtools::GraphAlignment& mateAlignment) override;
+    void processRead(const Read& read, const graphtools::GraphAlignment& readAlignment) override;
 
 protected:
     int countReadsSupportingNode(graphtools::NodeId nodeId) const;

@@ -84,7 +84,12 @@ repeats with the same repeat unit elsewhere in the genome. This information
 permits the program to use additional read-level evidence to potentially
 estimate the length of the repeat past the fragment length. For "rare" repeats,
 off-target regions (field `OfftargetRegions`) specify regions of the genome that
-may contain misaligned reads.
+may contain misaligned reads. For paired-end reads this additional evidence
+consists of read pairs whose mates are both inside the repeat; in read mode
+`any` (see [read modes](03_Usage.md#read-modes)) each unpaired in-repeat read
+found in an off-target region is counted individually. For long reads, alleles
+spanned by a read are sized directly from the alignment, so the fragment length
+limit above does not apply to them.
 
 The final entry describes a repeat region containing multiple short tandem
 repeats in close proximity to each other. The regular expression

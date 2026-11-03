@@ -23,6 +23,8 @@
 #include "io/SampleStats.hh"
 
 #include <cstdint>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -84,6 +86,62 @@ int extractReadLength(const string& htsFilePath)
     sam_close(htsFilePtr);
 
     return readLength;
+}
+
+ReadMode detectReadMode(const string& htsFilePath, const string& htsReferencePath)
+{
+    // Reads longer than this are considered long reads even when flagged as paired
+    const int kMaxShortReadLength = 1000;
+    const int kNumReadsToInspect = 1000;
+
+    std::unique_ptr<samFile, decltype(&hts_close)> htsFilePtr(sam_open(htsFilePath.c_str(), "r"), hts_close);
+    if (!htsFilePtr)
+    {
+        throw std::runtime_error("Failed to read " + htsFilePath);
+    }
+
+    // Required step for parsing of some CRAMs
+    if (hts_set_fai_filename(htsFilePtr.get(), htsReferencePath.c_str()) != 0)
+    {
+        throw std::runtime_error("Failed to set index of: " + htsReferencePath);
+    }
+
+    std::unique_ptr<bam_hdr_t, decltype(&bam_hdr_destroy)> htsHeaderPtr(sam_hdr_read(htsFilePtr.get()), bam_hdr_destroy);
+    if (!htsHeaderPtr)
+    {
+        throw std::runtime_error("Failed to read the header of " + htsFilePath);
+    }
+
+    std::unique_ptr<bam1_t, decltype(&bam_destroy1)> htsAlignmentPtr(bam_init1(), bam_destroy1);
+
+    ReadMode readMode = ReadMode::kPaired;
+    int numReadsInspected = 0;
+    int ret = 0;
+    while (numReadsInspected < kNumReadsToInspect
+           && (ret = sam_read1(htsFilePtr.get(), htsHeaderPtr.get(), htsAlignmentPtr.get())) >= 0)
+    {
+        const uint32_t samFlag = htsAlignmentPtr->core.flag;
+        if ((samFlag & BAM_FSECONDARY) || (samFlag & BAM_FSUPPLEMENTARY))
+        {
+            continue;
+        }
+        ++numReadsInspected;
+
+        const bool isPaired = samFlag & BAM_FPAIRED;
+        const bool isLong = htsAlignmentPtr->core.l_qseq > kMaxShortReadLength;
+        if (!isPaired || isLong)
+        {
+            readMode = ReadMode::kAny;
+            break;
+        }
+    }
+
+    if (ret < -1)
+    {
+        throw std::runtime_error("Failed to extract a record from " + htsFilePath);
+    }
+
+    return readMode;
 }
 
 ReferenceContigInfo extractReferenceContigInfo(const std::string& htsFilePath)

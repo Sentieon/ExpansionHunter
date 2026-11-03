@@ -98,6 +98,12 @@ void recoverMates(
 
         const Read& read = readPair.firstMate ? *readPair.firstMate : *readPair.secondMate;
 
+        // Reads sequenced without a mate have nothing to recover
+        if (read.isUnpaired())
+        {
+            continue;
+        }
+
         const auto alignmentStatsIterator = alignmentStatsCatalog.find(read.readId());
         if (alignmentStatsIterator == alignmentStatsCatalog.end())
         {
@@ -123,10 +129,18 @@ void recoverMates(
     }
 }
 
+/// \param[in] readMode In ReadMode::kPaired only paired reads are collected (original behaviour); in
+/// ReadMode::kAny unpaired reads are collected too and every read is restricted to \p clipRegion
+///
+/// \param[in] clipRegion Reference span of the locus graph; reads extending beyond it (long reads) are clipped to it
+///
+/// \param[in] maxReadLength Maximum length of a clipped read (see htshelpers::clipReadToRegion)
+///
 ReadPairs collectCandidateReads(
     const vector<GenomicRegion>& targetRegions, const vector<GenomicRegion>& offtargetRegions,
     AlignmentStatsCatalog& alignmentStatsCatalog, HtsFileSeeker& htsFileSeeker,
-    htshelpers::MateExtractor& mateExtractor)
+    htshelpers::MateExtractor& mateExtractor, ReadMode readMode, const optional<GenomicRegion>& clipRegion,
+    int32_t maxReadLength)
 {
     vector<GenomicRegion> regionsWithReads = combineRegions(targetRegions, offtargetRegions);
     ReadPairs readPairs;
@@ -138,15 +152,30 @@ ReadPairs collectCandidateReads(
         while (htsFileSeeker.trySeekingToNextPrimaryAlignment())
         {
             LinearAlignmentStats alignmentStats;
-            Read read = htsFileSeeker.decodeRead(alignmentStats);
-            if (alignmentStats.isPaired)
+            if (readMode == ReadMode::kPaired)
             {
-                alignmentStatsCatalog.emplace(std::make_pair(read.readId(), alignmentStats));
-                readPairs.Add(std::move(read));
+                Read read = htsFileSeeker.decodeRead(alignmentStats);
+                if (alignmentStats.isPaired)
+                {
+                    alignmentStatsCatalog.emplace(std::make_pair(read.readId(), alignmentStats));
+                    readPairs.Add(std::move(read));
+                }
+                else
+                {
+                    spdlog::warn("Skipping {} because it is unpaired", read.readId());
+                }
             }
             else
             {
-                spdlog::warn("Skipping {} because it is unpaired", read.readId());
+                optional<Read> optionalRead = clipRegion
+                    ? htsFileSeeker.decodeReadClippedTo(*clipRegion, maxReadLength, alignmentStats)
+                    : optional<Read>(htsFileSeeker.decodeRead(alignmentStats));
+                if (!optionalRead)
+                {
+                    continue;
+                }
+                alignmentStatsCatalog.emplace(std::make_pair(optionalRead->readId(), alignmentStats));
+                readPairs.Add(std::move(*optionalRead));
             }
         }
         const int numReadsCollected = readPairs.NumReads() - numReadsBeforeCollection;
@@ -161,9 +190,20 @@ ReadPairs collectCandidateReads(
     return readPairs;
 }
 
+// Reference end of the linear alignment of a read; the original (paired-end) estimate assumes that reads are
+// aligned end-to-end, which does not hold for long reads or reads clipped to the locus
+int64_t getReadEnd(const LinearAlignmentStats& readStats, const Read& read, ReadMode readMode)
+{
+    if (readMode == ReadMode::kPaired || readStats.refEnd < 0)
+    {
+        return readStats.pos + read.sequence().length();
+    }
+    return readStats.refEnd;
+}
+
 void analyzeReadPair(
     vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers, AnalyzerFinder& analyzerFinder, Read& read, Read& mate,
-    const AlignmentStatsCatalog& alignmentStats, graphtools::AlignerSelector& alignerSelector)
+    const AlignmentStatsCatalog& alignmentStats, graphtools::AlignerSelector& alignerSelector, ReadMode readMode)
 {
     const auto readStatsIter = alignmentStats.find(read.readId());
     const auto mateStatsIter = alignmentStats.find(mate.readId());
@@ -176,8 +216,8 @@ void analyzeReadPair(
     const LinearAlignmentStats& readStats = readStatsIter->second;
     const LinearAlignmentStats& mateStats = mateStatsIter->second;
 
-    const int64_t readEnd = readStats.pos + read.sequence().length();
-    const int64_t mateEnd = mateStats.pos + mate.sequence().length();
+    const int64_t readEnd = getReadEnd(readStats, read, readMode);
+    const int64_t mateEnd = getReadEnd(mateStats, mate, readMode);
     vector<AnalyzerBundle> analyzers
         = analyzerFinder.query(readStats.chromId, readStats.pos, readEnd, mateStats.chromId, mateStats.pos, mateEnd);
 
@@ -189,12 +229,12 @@ void analyzeReadPair(
     assert(analyzers.size() == 1);
     auto& analyzer(analyzers.front());
     processAnalyzerBundleReadPair(
-        *locusAnalyzers[analyzer.locusIndex], analyzer.regionType, analyzer.inputType, read, mate, alignerSelector);
+        *locusAnalyzers[analyzer.locusIndex], analyzer.regionType, analyzer.inputType, read, &mate, alignerSelector);
 }
 
 void analyzeRead(
     vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers, AnalyzerFinder& analyzerFinder, Read& read,
-    const AlignmentStatsCatalog& alignmentStats, graphtools::AlignerSelector& alignerSelector)
+    const AlignmentStatsCatalog& alignmentStats, graphtools::AlignerSelector& alignerSelector, ReadMode readMode)
 {
     const auto readStatsIter = alignmentStats.find(read.readId());
 
@@ -204,7 +244,7 @@ void analyzeRead(
     }
 
     const LinearAlignmentStats& readStats = readStatsIter->second;
-    const int64_t readEnd = readStats.pos + read.sequence().length();
+    const int64_t readEnd = getReadEnd(readStats, read, readMode);
 
     vector<AnalyzerBundle> analyzers = analyzerFinder.query(readStats.chromId, readStats.pos, readEnd);
 
@@ -221,7 +261,7 @@ void analyzeRead(
 void processReads(
     vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers, ReadPairs& candidateReadPairs,
     const AlignmentStatsCatalog& alignmentStats, AnalyzerFinder& analyzerFinder,
-    graphtools::AlignerSelector& alignerSelector)
+    graphtools::AlignerSelector& alignerSelector, ReadMode readMode)
 {
     for (auto& fragmentIdAndReads : candidateReadPairs)
     {
@@ -230,12 +270,12 @@ void processReads(
         {
             analyzeReadPair(
                 locusAnalyzers, analyzerFinder, *readPair.firstMate, *readPair.secondMate, alignmentStats,
-                alignerSelector);
+                alignerSelector, readMode);
         }
         else
         {
             Read& read = readPair.firstMate ? *readPair.firstMate : *readPair.secondMate;
-            analyzeRead(locusAnalyzers, analyzerFinder, read, alignmentStats, alignerSelector);
+            analyzeRead(locusAnalyzers, analyzerFinder, read, alignmentStats, alignerSelector, readMode);
         }
     }
 }
@@ -273,6 +313,8 @@ void processLocus(
     LocusThreadLocalData& locusThreadData(locusThreadLocalDataPool[threadIndex]);
     std::string locusId = "Unknown";
 
+    const ReadMode readMode = heuristicParams.readMode();
+
     try
     {
         HtsFileSeeker htsFileSeeker(inputPaths.htsFile(), inputPaths.reference());
@@ -299,14 +341,17 @@ void processLocus(
             vector<unique_ptr<LocusAnalyzer>> locusAnalyzers;
             auto analyzer(make_unique<LocusAnalyzer>(locusSpec, heuristicParams, alignmentWriter));
             locusAnalyzers.emplace_back(std::move(analyzer));
-            AnalyzerFinder analyzerFinder(locusAnalyzers);
+            AnalyzerFinder analyzerFinder(locusAnalyzers, readMode == ReadMode::kPaired);
+
+            const optional<GenomicRegion> clipRegion
+                = readMode == ReadMode::kAny ? locusSpec.readClippingRegion() : boost::none;
 
             AlignmentStatsCatalog alignmentStats;
             ReadPairs readPairs = collectCandidateReads(
                 locusSpec.targetReadExtractionRegions(), locusSpec.offtargetReadExtractionRegions(), alignmentStats,
-                htsFileSeeker, mateExtractor);
+                htsFileSeeker, mateExtractor, readMode, clipRegion, heuristicParams.maxLocusReadLength());
 
-            processReads(locusAnalyzers, readPairs, alignmentStats, analyzerFinder, alignerSelector);
+            processReads(locusAnalyzers, readPairs, alignmentStats, analyzerFinder, alignerSelector, readMode);
 
             sampleFindings[locusIndex] = locusAnalyzers.front()->analyze(sampleSex, boost::none);
         }

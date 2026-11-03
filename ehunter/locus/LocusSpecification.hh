@@ -83,6 +83,10 @@ public:
 
     bool requiresGenomeWideDepth() const;
 
+    // Reference span covered by the locus graph (left flank start to right flank end); reads extending beyond it are
+    // clipped to this region before graph alignment. Empty when the flanks have no reference projection.
+    boost::optional<GenomicRegion> readClippingRegion() const;
+
 private:
     std::string locusId_;
     ChromType typeOfChromLocusLocatedOn_;

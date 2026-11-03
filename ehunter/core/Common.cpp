@@ -98,3 +98,20 @@ std::ostream& operator<<(std::ostream& out, NumericInterval numericInterval)
 }
 
 }
+
+namespace ehunter
+{
+std::ostream& operator<<(std::ostream& out, ReadMode readMode)
+{
+    switch (readMode)
+    {
+    case ReadMode::kPaired:
+        out << "paired";
+        break;
+    case ReadMode::kAny:
+        out << "any";
+        break;
+    }
+    return out;
+}
+}

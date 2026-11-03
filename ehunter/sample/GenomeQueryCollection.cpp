@@ -49,8 +49,9 @@ void initializeGenomeMask(GenomeMask& genomeMask, vector<unique_ptr<locus::Locus
 }
 }
 
-GenomeQueryCollection::GenomeQueryCollection(vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers)
-    : analyzerFinder(locusAnalyzers)
+GenomeQueryCollection::GenomeQueryCollection(
+    vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers, bool requireReadContainment)
+    : analyzerFinder(locusAnalyzers, requireReadContainment)
 {
     initializeGenomeMask(targetRegionMask, locusAnalyzers);
 }

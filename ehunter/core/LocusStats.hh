@@ -71,13 +71,15 @@ std::ostream& operator<<(std::ostream& out, const LocusStats& stats);
 class LocusStatsCalculator
 {
 public:
-    LocusStatsCalculator(ChromType chromType, const graphtools::Graph& graph);
+    LocusStatsCalculator(ChromType chromType, const graphtools::Graph& graph, ReadMode readMode = ReadMode::kPaired);
 
     void inspect(const graphtools::GraphAlignment& readAlign, const graphtools::GraphAlignment& mateAlign);
     void inspectRead(const graphtools::GraphAlignment& readAlign);
 
     LocusStats estimate(Sex sampleSex);
     void recordReadLen(const graphtools::GraphAlignment& readAlign);
+    // Accumulates the number of read bases aligned to the flanks (used for read-length independent depth estimation)
+    void recordFlankCoverage(const graphtools::GraphAlignment& readAlign);
 
 private:
     using AccumulatorStats
@@ -87,6 +89,8 @@ private:
     void recordFragLen(const graphtools::GraphAlignment& readAlign, const graphtools::GraphAlignment& mateAlign);
 
     ChromType chromType_;
+    ReadMode readMode_;
+    int64_t flankBasesCovered_ = 0;
     Accumulator readLengthAccumulator_;
     Accumulator fragLengthAccumulator_;
     graphtools::NodeId leftFlankId_;

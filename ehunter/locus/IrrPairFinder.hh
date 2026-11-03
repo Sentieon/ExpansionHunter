@@ -35,6 +35,8 @@ public:
 
     const std::string& targetMotif() const { return targetMotif_; }
     bool check(const std::string& read, const std::string& mate) const;
+    // Checks whether a single read (without a mate) is an in-repeat read
+    bool checkRead(const std::string& read) const;
 
 private:
     std::string targetMotif_;

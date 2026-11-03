@@ -43,8 +43,9 @@ std::ostream& operator<<(std::ostream& out, const LocusStats& stats)
     return out;
 }
 
-LocusStatsCalculator::LocusStatsCalculator(ChromType chromType, const graphtools::Graph& graph)
+LocusStatsCalculator::LocusStatsCalculator(ChromType chromType, const graphtools::Graph& graph, ReadMode readMode)
     : chromType_(chromType)
+    , readMode_(readMode)
 {
     // As elsewhere in the program, assuming that the fist and last node are flanks
     leftFlankId_ = 0;
@@ -59,11 +60,20 @@ void LocusStatsCalculator::inspect(const GraphAlignment& readAlign, const GraphA
     recordReadLen(readAlign);
     recordReadLen(mateAlign);
     recordFragLen(readAlign, mateAlign);
+    if (readMode_ == ReadMode::kAny)
+    {
+        recordFlankCoverage(readAlign);
+        recordFlankCoverage(mateAlign);
+    }
 }
 
 void LocusStatsCalculator::inspectRead(const GraphAlignment& readAlign)
 {
     recordReadLen(readAlign);
+    if (readMode_ == ReadMode::kAny)
+    {
+        recordFlankCoverage(readAlign);
+    }
 }
 
 static AlleleCount determineExpectedAlleleCount(ChromType chromType, Sex sex)
@@ -92,14 +102,30 @@ LocusStats LocusStatsCalculator::estimate(Sex sampleSex)
     }
 
     const int meanReadLength = boost::accumulators::mean(readLengthAccumulator_);
-    const int numberOfStartPositions = leftFlankLength_ + rightFlankLength_ - meanReadLength;
-    const double depth = meanReadLength * (static_cast<double>(readCount) / numberOfStartPositions);
+
+    double depth = 0.0;
+    if (readMode_ == ReadMode::kPaired)
+    {
+        const int numberOfStartPositions = leftFlankLength_ + rightFlankLength_ - meanReadLength;
+        depth = meanReadLength * (static_cast<double>(readCount) / numberOfStartPositions);
+    }
+    else
+    {
+        // Mean per-base coverage of the flanks; unlike the estimate above this does not assume that reads are
+        // shorter than the flanks
+        depth = static_cast<double>(flankBasesCovered_) / (leftFlankLength_ + rightFlankLength_);
+    }
 
     int meanFragLen = 0;
     const int fragCount = boost::accumulators::count(fragLengthAccumulator_);
     if (fragCount != 0)
     {
         meanFragLen = boost::accumulators::mean(fragLengthAccumulator_);
+    }
+    else if (readMode_ == ReadMode::kAny)
+    {
+        // Without read pairs a fragment is a single read
+        meanFragLen = meanReadLength;
     }
 
     return { alleleCount, meanReadLength, meanFragLen, depth };
@@ -111,6 +137,19 @@ void LocusStatsCalculator::recordReadLen(const GraphAlignment& readAlign)
     if (firstNode == leftFlankId_ || firstNode == rightFlankId_)
     {
         readLengthAccumulator_(readAlign.queryLength());
+    }
+}
+
+void LocusStatsCalculator::recordFlankCoverage(const GraphAlignment& readAlign)
+{
+    const int numNodes = readAlign.path().numNodes();
+    for (int nodeIndex = 0; nodeIndex != numNodes; ++nodeIndex)
+    {
+        const graphtools::NodeId node = readAlign.path().getNodeIdByIndex(nodeIndex);
+        if (node == leftFlankId_ || node == rightFlankId_)
+        {
+            flankBasesCovered_ += readAlign.alignments().at(nodeIndex).referenceLength();
+        }
     }
 }
 

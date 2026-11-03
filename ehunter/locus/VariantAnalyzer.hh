@@ -56,6 +56,9 @@ public:
         const graphtools::GraphAlignment& mateAlignment)
         = 0;
 
+    // Processes a read without a mate
+    virtual void processRead(const Read& read, const graphtools::GraphAlignment& readAlignment) = 0;
+
     virtual std::unique_ptr<VariantFindings> analyze(const LocusStats& stats) = 0;
 
     const std::string& variantId() const { return variantId_; }

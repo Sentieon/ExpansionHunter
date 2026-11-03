@@ -21,6 +21,7 @@
 
 #include "GenomeMask.hh"
 
+#include <algorithm>
 #include <cassert>
 
 namespace ehunter
@@ -43,6 +44,25 @@ bool GenomeMask::query(int32_t contigId, int64_t pos) const
     }
     const contigMask& cmask = mask_[contigId];
     return ((binPos(pos) < cmask.size()) && cmask[binPos(pos)]);
+}
+
+bool GenomeMask::queryRange(int32_t contigId, int64_t start, int64_t end) const
+{
+    if (contigId < 0 || contigId >= static_cast<int>(mask_.size()) || end <= start)
+    {
+        return false;
+    }
+
+    const contigMask& cmask = mask_[contigId];
+    const auto lastBin = std::min(binPos(end - 1), cmask.size() - 1);
+    for (auto bin = binPos(std::max<int64_t>(start, 0)); bin <= lastBin && bin < cmask.size(); ++bin)
+    {
+        if (cmask[bin])
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void GenomeMask::addRegion(int32_t contigId, int64_t start, int64_t stop)

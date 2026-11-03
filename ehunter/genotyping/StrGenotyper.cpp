@@ -100,10 +100,11 @@ vector<double> getTopFragLogliks(FragLogliks& loglikCalc, const unordered_set<in
     return topFragLogliks;
 }
 
-RepeatGenotype genotype(AlleleCount alleleCount, int motifLen, int readLen, int fragLen, AlignMatrix& alignMatrix)
+RepeatGenotype genotype(
+    AlleleCount alleleCount, int motifLen, int readLen, int fragLen, AlignMatrix& alignMatrix, double stutterRate)
 {
     filter(alignMatrix);
-    FragLogliks fragLoglikCalc(motifLen, readLen, fragLen, &alignMatrix);
+    FragLogliks fragLoglikCalc(motifLen, readLen, fragLen, &alignMatrix, stutterRate);
     unordered_set<int> candidateAlleleSizes = getAlleleCandidates(readLen, motifLen, alignMatrix);
     vector<double> topFragLogliks = getTopFragLogliks(fragLoglikCalc, candidateAlleleSizes);
 

@@ -28,6 +28,8 @@
 #include <boost/optional.hpp>
 #include <boost/program_options.hpp>
 
+#include "spdlog/spdlog.h"
+
 #include "app/Version.hh"
 #include "io/SampleStats.hh"
 
@@ -60,6 +62,10 @@ struct UserParameters
     int regionExtensionLength;
     int qualityCutoffForGoodBaseCall = 20;
     bool skipUnaligned;
+    string readMode = "auto";
+    int minSingletonMapq = 20;
+    int maxLocusReadLength = 10000;
+    double stutterRate = 0.05;
 
     string analysisMode;
     string logLevel;
@@ -91,6 +97,10 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("aligner,a", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Specify which aligner to use (dag-aligner or path-aligner)")
         ("analysis-mode,m", po::value<string>(&params.analysisMode)->default_value("seeking"), "Specify which analysis workflow to use (seeking or streaming)")
         ("threads,n", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
+        ("read-mode", po::value<string>(&params.readMode)->default_value("auto"), "Read model: auto, paired (Illumina paired-end reads only), or any (also single-end short reads and long reads)")
+        ("min-singleton-mapq", po::value<int>(&params.minSingletonMapq)->default_value(20), "Minimum MAPQ for an unpaired read that is not anchored to a repeat flank to be used as in-repeat evidence (read-mode any)")
+        ("max-locus-read-length", po::value<int>(&params.maxLocusReadLength)->default_value(10000), "Maximum length of the part of a read that is aligned to a locus; longer pieces are shortened, which bounds memory use (read-mode any)")
+        ("stutter-rate", po::value<double>(&params.stutterRate)->default_value(0.05), "Probability that a read reports one repeat unit more (or fewer) than the allele it originated from; 0 disables the stutter model (read-mode any)")
     ;
     // clang-format on
 
@@ -179,6 +189,28 @@ void assertValidity(const UserParameters& userParameters)
     if ((userParameters.analysisMode != "seeking") and (userParameters.analysisMode != "streaming"))
     {
         throw std::invalid_argument(userParameters.analysisMode + " is not a valid analysis mode");
+    }
+
+    // Validate read mode:
+    if ((userParameters.readMode != "auto") and (userParameters.readMode != "paired")
+        and (userParameters.readMode != "any"))
+    {
+        throw std::invalid_argument(userParameters.readMode + " is not a valid read mode");
+    }
+
+    if (userParameters.minSingletonMapq < 0 || userParameters.minSingletonMapq > 255)
+    {
+        throw std::invalid_argument("Minimum singleton MAPQ must be between 0 and 255");
+    }
+
+    if (userParameters.maxLocusReadLength < 1000)
+    {
+        throw std::invalid_argument("Maximum locus read length must be at least 1000");
+    }
+
+    if (userParameters.stutterRate < 0 || userParameters.stutterRate > 0.4)
+    {
+        throw std::invalid_argument("Stutter rate must be between 0 and 0.4");
     }
 
     // Validate input file paths
@@ -322,6 +354,22 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     HeuristicParameters heuristicParameters(
         userParams.regionExtensionLength, userParams.qualityCutoffForGoodBaseCall, userParams.skipUnaligned,
         decodeAlignerType(userParams.alignerType));
+
+    ReadMode readMode = ReadMode::kPaired;
+    if (userParams.readMode == "auto")
+    {
+        readMode = detectReadMode(userParams.htsFilePath, userParams.referencePath);
+        spdlog::info("Detected read mode: {}", readMode == ReadMode::kPaired ? "paired" : "any");
+    }
+    else
+    {
+        readMode = userParams.readMode == "paired" ? ReadMode::kPaired : ReadMode::kAny;
+        spdlog::info("Using read mode: {}", userParams.readMode);
+    }
+    heuristicParameters.setReadMode(readMode);
+    heuristicParameters.setMinSingletonMapq(userParams.minSingletonMapq);
+    heuristicParameters.setMaxLocusReadLength(userParams.maxLocusReadLength);
+    heuristicParameters.setStutterRate(userParams.stutterRate);
 
     LogLevel logLevel;
     try

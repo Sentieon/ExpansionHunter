@@ -79,6 +79,7 @@ LinearAlignmentStats decodeAlignmentStats(bam1_t* htsAlignPtr)
     alignmentStats.mapq = htsAlignPtr->core.qual;
     alignmentStats.mateChromId = htsAlignPtr->core.mtid;
     alignmentStats.matePos = htsAlignPtr->core.mpos;
+    alignmentStats.refEnd = bam_endpos(htsAlignPtr);
 
     uint32_t samFlag = htsAlignPtr->core.flag;
     alignmentStats.isPaired = samFlag & BAM_FPAIRED;
@@ -113,11 +114,13 @@ static Cache_seq_nt16_str_lc seq_nt16_str_lc;
 Read decodeRead(bam1_t* htsAlignPtr)
 {
     const uint32_t samFlag = htsAlignPtr->core.flag;
+    const bool isPaired = samFlag & BAM_FPAIRED;
     const bool isFirstMate = samFlag & BAM_FREAD1;
     const bool isReversed = samFlag & BAM_FREVERSE;
 
     const char* qname(bam_get_qname(htsAlignPtr));
-    MateNumber mateNumber = isFirstMate ? MateNumber::kFirstMate : MateNumber::kSecondMate;
+    MateNumber mateNumber = !isPaired ? MateNumber::kUnpaired
+                                      : (isFirstMate ? MateNumber::kFirstMate : MateNumber::kSecondMate);
     ReadId readId(qname, mateNumber);
 
     string bases;
@@ -138,7 +141,187 @@ Read decodeRead(bam1_t* htsAlignPtr)
         }
     }
 
-    return { std::move(readId), std::move(bases), isReversed };
+    return { std::move(readId), std::move(bases), isReversed, static_cast<int>(htsAlignPtr->core.qual) };
+}
+
+QueryInterval computeQueryIntervalInRegion(
+    int64_t alignStart, const std::vector<uint32_t>& cigar, int32_t queryLen, int64_t regionStart, int64_t regionEnd)
+{
+    int64_t refPos = alignStart;
+    int32_t queryPos = 0;
+    int32_t queryStart = -1;
+    int32_t queryEnd = -1;
+
+    for (uint32_t cigarOp : cigar)
+    {
+        const int opType = bam_cigar_op(cigarOp);
+        const int64_t opLen = bam_cigar_oplen(cigarOp);
+        const bool consumesQuery = bam_cigar_type(opType) & 1;
+        const bool consumesReference = bam_cigar_type(opType) & 2;
+
+        if (queryStart < 0 && refPos >= regionStart)
+        {
+            queryStart = queryPos;
+        }
+        if (refPos >= regionEnd)
+        {
+            queryEnd = queryPos;
+            break;
+        }
+
+        if (consumesReference)
+        {
+            if (queryStart < 0 && refPos < regionStart && refPos + opLen > regionStart)
+            {
+                queryStart = consumesQuery ? queryPos + static_cast<int32_t>(regionStart - refPos) : queryPos;
+            }
+            if (refPos < regionEnd && refPos + opLen > regionEnd)
+            {
+                queryEnd = consumesQuery ? queryPos + static_cast<int32_t>(regionEnd - refPos) : queryPos;
+                break;
+            }
+        }
+
+        if (consumesQuery)
+        {
+            queryPos += static_cast<int32_t>(opLen);
+        }
+        if (consumesReference)
+        {
+            refPos += opLen;
+        }
+    }
+
+    if (queryStart < 0)
+    {
+        // Either the alignment ends before the region or a trailing operation reached the region boundary exactly
+        if (queryEnd < 0 && refPos >= regionStart && refPos < regionEnd)
+        {
+            queryStart = queryPos;
+        }
+        else
+        {
+            return QueryInterval();
+        }
+    }
+    if (queryEnd < 0)
+    {
+        // Alignment ends inside the region: keep the rest of the read, including any trailing soft-clip
+        queryEnd = queryLen;
+    }
+
+    QueryInterval interval;
+    interval.start = std::min(queryStart, queryLen);
+    interval.end = std::min(std::max(queryEnd, interval.start), queryLen);
+    return interval;
+}
+
+std::vector<uint32_t> decodeCigar(bam1_t* htsAlignPtr)
+{
+    const uint32_t* cigarPtr = bam_get_cigar(htsAlignPtr);
+    return std::vector<uint32_t>(cigarPtr, cigarPtr + htsAlignPtr->core.n_cigar);
+}
+
+namespace
+{
+// Number of soft-clipped bases at the start (end) of the read, ignoring hard clips
+int32_t leadingSoftclipLength(const std::vector<uint32_t>& cigar)
+{
+    for (uint32_t cigarOp : cigar)
+    {
+        if (bam_cigar_op(cigarOp) == BAM_CHARD_CLIP)
+        {
+            continue;
+        }
+        return bam_cigar_op(cigarOp) == BAM_CSOFT_CLIP ? static_cast<int32_t>(bam_cigar_oplen(cigarOp)) : 0;
+    }
+    return 0;
+}
+
+int32_t trailingSoftclipLength(const std::vector<uint32_t>& cigar)
+{
+    for (auto it = cigar.rbegin(); it != cigar.rend(); ++it)
+    {
+        if (bam_cigar_op(*it) == BAM_CHARD_CLIP)
+        {
+            continue;
+        }
+        return bam_cigar_op(*it) == BAM_CSOFT_CLIP ? static_cast<int32_t>(bam_cigar_oplen(*it)) : 0;
+    }
+    return 0;
+}
+}
+
+boost::optional<Read> clipReadToRegion(
+    const Read& read, int32_t contigId, int64_t alignStart, const std::vector<uint32_t>& cigar,
+    const GenomicRegion& region, int32_t maxLength)
+{
+    const int32_t queryLen = read.sequence().length();
+    QueryInterval interval;
+    interval.start = 0;
+    interval.end = queryLen;
+
+    // Soft-clipped read ends that are part of the interval
+    int32_t leadingSoftclip = 0;
+    int32_t trailingSoftclip = 0;
+
+    const bool isAlignmentUsable = !cigar.empty() && contigId == region.contigIndex() && alignStart >= 0;
+    if (isAlignmentUsable)
+    {
+        const int64_t alignEnd = alignStart + bam_cigar2rlen(cigar.size(), cigar.data());
+        if (alignEnd > region.start() && alignStart < region.end())
+        {
+            interval = computeQueryIntervalInRegion(alignStart, cigar, queryLen, region.start(), region.end());
+            if (interval.length() <= 0)
+            {
+                return boost::none;
+            }
+        }
+
+        if (interval.start == 0)
+        {
+            leadingSoftclip = std::min(leadingSoftclipLength(cigar), interval.length());
+        }
+        if (interval.end == queryLen)
+        {
+            trailingSoftclip = std::min(trailingSoftclipLength(cigar), interval.length() - leadingSoftclip);
+        }
+    }
+
+    // Enforce the length limit: shorten retained soft clips from their outer ends first, then remove bases from the
+    // end of the read so that the start of the read (anchored on the left of the locus) is kept
+    if (maxLength > 0 && interval.length() > maxLength)
+    {
+        int32_t excess = interval.length() - maxLength;
+
+        const int32_t leadingTrim = std::min(excess, leadingSoftclip);
+        interval.start += leadingTrim;
+        excess -= leadingTrim;
+
+        const int32_t trailingTrim = std::min(excess, trailingSoftclip);
+        interval.end -= trailingTrim;
+        excess -= trailingTrim;
+
+        interval.end -= excess;
+    }
+
+    if (interval.start == 0 && interval.end == queryLen)
+    {
+        return read;
+    }
+
+    return Read(read.readId(), read.sequence().substr(interval.start, interval.length()), read.isReversed(), read.mapq());
+}
+
+boost::optional<Read> decodeReadClippedToRegion(bam1_t* htsAlignPtr, const GenomicRegion& region, int32_t maxLength)
+{
+    Read read = decodeRead(htsAlignPtr);
+    if (htsAlignPtr->core.flag & BAM_FUNMAP)
+    {
+        return clipReadToRegion(read, -1, -1, {}, region, maxLength);
+    }
+    return clipReadToRegion(
+        read, htsAlignPtr->core.tid, htsAlignPtr->core.pos, decodeCigar(htsAlignPtr), region, maxLength);
 }
 
 ReferenceContigInfo decodeContigInfo(bam_hdr_t* htsHeaderPtr)

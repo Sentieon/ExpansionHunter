@@ -108,6 +108,13 @@ bool HtsFileStreamer::isStreamingAlignedReads() const
 
 Read HtsFileStreamer::decodeRead() const { return htshelpers::decodeRead(htsAlignmentPtr_); }
 
+std::vector<uint32_t> HtsFileStreamer::currentCigar() const { return htshelpers::decodeCigar(htsAlignmentPtr_); }
+
+boost::optional<Read> HtsFileStreamer::decodeReadClippedTo(const GenomicRegion& region, int32_t maxLength) const
+{
+    return htshelpers::decodeReadClippedToRegion(htsAlignmentPtr_, region, maxLength);
+}
+
 HtsFileStreamer::~HtsFileStreamer()
 {
     bam_destroy1(htsAlignmentPtr_);

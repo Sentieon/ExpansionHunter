@@ -42,8 +42,10 @@ namespace locus
 
 LocusAnalyzer::LocusAnalyzer(LocusSpecification locusSpec, const HeuristicParameters& params, AlignWriterPtr writer)
     : locusSpec_(std::move(locusSpec))
+    , readMode_(params.readMode())
+    , stutterRate_(params.stutterRate())
     , aligner_(locusSpec_.locusId(), &locusSpec_.regionGraph(), params, std::move(writer))
-    , statsCalc_(locusSpec_.typeOfChromLocusLocatedOn(), locusSpec_.regionGraph())
+    , statsCalc_(locusSpec_.typeOfChromLocusLocatedOn(), locusSpec_.regionGraph(), readMode_)
 {
     for (const auto& variantSpec : locusSpec_.variantSpecs())
     {
@@ -92,6 +94,10 @@ void LocusAnalyzer::processMates(
     {
         processOfftargetMates(read, *mate);
     }
+    else if (readMode_ == ReadMode::kAny)
+    {
+        processOfftargetRead(read);
+    }
 }
 
 void LocusAnalyzer::processOntargetMates(Read& read, Read* mate, graphtools::AlignerSelector& alignerSelector)
@@ -107,6 +113,12 @@ void LocusAnalyzer::processOntargetMates(Read& read, Read* mate, graphtools::Ali
         return;
     }
 
+    if (irrPairFinder_ && neitherMateAligned && !mate && readMode_ == ReadMode::kAny)
+    {
+        processOfftargetRead(read);
+        return;
+    }
+
     if (bothMatesAligned)
     {
         statsCalc_.inspect(*alignedPair.first, *alignedPair.second);
@@ -114,10 +126,16 @@ void LocusAnalyzer::processOntargetMates(Read& read, Read* mate, graphtools::Ali
     }
     else
     {
-        if (alignedPair.first) {
+        if (alignedPair.first)
+        {
             statsCalc_.inspectRead(*alignedPair.first);
+            if (!mate && readMode_ == ReadMode::kAny)
+            {
+                runVariantAnalysis(read, *alignedPair.first);
+            }
         }
-        if (alignedPair.second) {
+        if (alignedPair.second)
+        {
             statsCalc_.inspectRead(*alignedPair.second);
         }
     }
@@ -175,7 +193,8 @@ void LocusAnalyzer::addIrrPairFinder(std::string motif) { irrPairFinder_ = IrrPa
 void LocusAnalyzer::addRepeatAnalyzer(std::string variantId, graphtools::NodeId nodeId)
 {
     variantAnalyzers_.emplace_back(make_unique<RepeatAnalyzer>(
-        std::move(variantId), locusSpec_.regionGraph(), nodeId, locusSpec_.genotyperParameters()));
+        std::move(variantId), locusSpec_.regionGraph(), nodeId, locusSpec_.genotyperParameters(), readMode_,
+        stutterRate_));
 }
 
 void LocusAnalyzer::addSmallVariantAnalyzer(
@@ -192,6 +211,43 @@ void LocusAnalyzer::runVariantAnalysis(
     for (auto& analyzer : variantAnalyzers_)
     {
         analyzer->processMates(read, readAlign, mate, mateAlign);
+    }
+}
+
+void LocusAnalyzer::runVariantAnalysis(const Read& read, const LocusAnalyzer::Align& readAlign)
+{
+    for (auto& analyzer : variantAnalyzers_)
+    {
+        analyzer->processRead(read, readAlign);
+    }
+}
+
+void LocusAnalyzer::processOfftargetRead(const Read& read)
+{
+    if (!irrPairFinder_)
+    {
+        const string message = "Locus " + locusSpec_.locusId() + " is not supposed to have offtarget reads";
+        throw std::logic_error(message);
+    }
+
+    if (irrPairFinder_->checkRead(read.sequence()))
+    {
+        int numAnalyzersFound = 0;
+        for (auto& variantAnalyzer : variantAnalyzers_)
+        {
+            auto repeatAnalyzer = dynamic_cast<RepeatAnalyzer*>(variantAnalyzer.get());
+            if (repeatAnalyzer != nullptr && repeatAnalyzer->repeatUnit() == irrPairFinder_->targetMotif())
+            {
+                numAnalyzersFound++;
+                repeatAnalyzer->addInrepeatRead();
+            }
+        }
+
+        if (numAnalyzersFound != 1)
+        {
+            const string message = "Locus " + locusSpec_.locusId() + " must have exactly one rare motif";
+            throw std::logic_error(message);
+        }
     }
 }
 

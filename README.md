@@ -10,7 +10,9 @@ are well known examples.
 
 Expansion Hunter aims to estimate sizes of such repeats by performing a targeted
 search through a BAM/CRAM file for reads that span, flank, and are fully
-contained in each repeat.
+contained in each repeat. It was designed for paired-end short reads and also
+supports single-end short reads and long reads (see the
+[usage guide](docs/03_Usage.md#read-modes)).
 
 Linux and macOS operating systems are currently supported.
 

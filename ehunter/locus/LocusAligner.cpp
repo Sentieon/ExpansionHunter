@@ -21,6 +21,8 @@
 
 #include "locus/LocusAligner.hh"
 
+#include "spdlog/spdlog.h"
+
 #include "alignment/AlignmentFilters.hh"
 #include "alignment/OperationsOnAlignments.hh"
 
@@ -35,6 +37,8 @@ LocusAligner::LocusAligner(
     , aligner_(graph, params.kmerLenForAlignment(), params.paddingLength(), params.seedAffixTrimLength())
     , orientationPredictor_(graph, params.orientationPredictorKmerLen(), params.orientationPredictorMinKmerCount())
     , writer_(std::move(writer))
+    , readMode_(params.readMode())
+    , minSingletonMapq_(params.minSingletonMapq())
 {
 }
 
@@ -50,7 +54,16 @@ LocusAligner::AlignedPair LocusAligner::align(Read& read, Read* mate, graphtools
 
     if (!checkIfLocallyPlacedReadPair(readAlign, mateAlign, kMinNonRepeatAlignmentScore))
     {
-        return { boost::none, boost::none };
+        // A read without a mate cannot be anchored by its mate; if it is confidently placed at the locus by the linear
+        // aligner it is kept as (in-repeat) evidence provided its graph alignment is of good quality
+        const bool keepUnanchoredSingleton = readMode_ == ReadMode::kAny && mate == nullptr && readAlign
+            && read.mapq() >= minSingletonMapq_ && readAlign->referenceLength() > 0
+            && checkIfPassesAlignmentFilters(*readAlign);
+
+        if (!keepUnanchoredSingleton)
+        {
+            return { boost::none, boost::none };
+        }
     }
 
     if (readAlign && mateAlign)
@@ -61,6 +74,19 @@ LocusAligner::AlignedPair LocusAligner::align(Read& read, Read* mate, graphtools
         writer_->write(
             locusId_, mate->fragmentId(), mate->sequence(), mate->isFirstMate(), mate->isReversed(), mate->isReversed(),
             *mateAlign);
+    }
+    else if (readMode_ == ReadMode::kAny && mate == nullptr && readAlign)
+    {
+        if (read.isUnpaired())
+        {
+            writer_->writeUnpaired(locusId_, read.fragmentId(), read.sequence(), read.isReversed(), *readAlign);
+        }
+        else
+        {
+            writer_->write(
+                locusId_, read.fragmentId(), read.sequence(), read.isFirstMate(), read.isReversed(), read.isReversed(),
+                *readAlign);
+        }
     }
 
     return { readAlign, mateAlign };
@@ -79,13 +105,35 @@ LocusAligner::OptionalAlign LocusAligner::align(Read& read, graphtools::AlignerS
         return {};
     }
 
-    auto readAligns = aligner_.align(read.sequence(), alignerSelector);
-    if (readAligns.empty())
+    if (readMode_ == ReadMode::kPaired)
     {
-        return {};
+        auto readAligns = aligner_.align(read.sequence(), alignerSelector);
+        if (readAligns.empty())
+        {
+            return {};
+        }
+
+        return computeCanonicalAlignment(readAligns);
     }
 
-    return computeCanonicalAlignment(readAligns);
+    // In read mode "any" (long and unusual reads) a read that cannot be aligned is skipped instead of aborting the run
+    try
+    {
+        auto readAligns = aligner_.align(read.sequence(), alignerSelector);
+        if (readAligns.empty())
+        {
+            return {};
+        }
+
+        return computeCanonicalAlignment(readAligns);
+    }
+    catch (const std::exception& e)
+    {
+        spdlog::warn(
+            "Skipping read {} at locus {} ({} bp): {}", read.fragmentId(), locusId_, read.sequence().length(),
+            std::string(e.what()).substr(0, 200));
+        return {};
+    }
 }
 
 }

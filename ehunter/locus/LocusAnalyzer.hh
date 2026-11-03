@@ -80,9 +80,13 @@ public:
 private:
     void processOntargetMates(Read& read, Read* mate, graphtools::AlignerSelector& alignerSelector);
     void processOfftargetMates(const Read& read, const Read& mate);
+    void processOfftargetRead(const Read& read);
     void runVariantAnalysis(const Read& read, const Align& readAlign, const Read& mate, const Align& mateAlign);
+    void runVariantAnalysis(const Read& read, const Align& readAlign);
 
     LocusSpecification locusSpec_;
+    ReadMode readMode_;
+    double stutterRate_;
     LocusAligner aligner_;
     LocusStatsCalculator statsCalc_;
     boost::optional<IrrPairFinder> irrPairFinder_;

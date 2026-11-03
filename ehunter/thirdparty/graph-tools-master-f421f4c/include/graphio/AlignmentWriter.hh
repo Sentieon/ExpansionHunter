@@ -39,6 +39,14 @@ public:
         const std::string& locusId, const std::string& fragmentName, const std::string& query, bool isFirstMate,
         bool isReversed, bool isMateReversed, const GraphAlignment& alignment)
         = 0;
+
+    // Writes the alignment of a read that was sequenced without a mate; by default written as a first mate
+    virtual void writeUnpaired(
+        const std::string& locusId, const std::string& fragmentName, const std::string& query, bool isReversed,
+        const GraphAlignment& alignment)
+    {
+        write(locusId, fragmentName, query, true, isReversed, false, alignment);
+    }
 };
 
 class BlankAlignmentWriter : public AlignmentWriter

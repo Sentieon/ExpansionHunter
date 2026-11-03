@@ -75,7 +75,7 @@ static string extendLocusStructure(
     {
         const string message = "Flanks can contain at most " + to_string(maxNsAllowedInFlanks)
             + " characters N but found " + to_string(numNsInLeftFlank + numNsInRightFlank) + " Ns";
-        throw std::runtime_error(message);
+        throw FlanksWithNsError(message);
     }
 
     return leftFlank + flanklessLocusStructure + rightFlank;
@@ -327,6 +327,10 @@ LocusSpecification decodeLocusSpecification(
             }
         }
         return locusSpec;
+    }
+    catch (const FlanksWithNsError& e)
+    {
+        throw FlanksWithNsError("Error loading locus " + userDescription.locusId + ": " + e.what());
     }
     catch (const std::exception& e)
     {

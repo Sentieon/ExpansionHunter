@@ -139,3 +139,18 @@ TEST(GettingCompatibleAlignment, TypicalRead_CompatibleAlignmentFound)
         EXPECT_EQ(StrAlign(StrAlign::Type::kFlanking, 2, 50, 0), alignmentCalculator.findConsistentAlignment(2, align));
     }
 }
+
+TEST(CreatingStrAlign, LongReadValues_Stored)
+{
+    // Scores of long reads exceed 16 bits
+    StrAlign spanning(StrAlign::Type::kSpanning, 3000, 49692, 0);
+    EXPECT_EQ(49692, spanning.score());
+    EXPECT_EQ(3000, spanning.numMotifs());
+
+    // Large indel counts saturate rather than fail; only their presence is used downstream
+    StrAlign withIndels(StrAlign::Type::kSpanning, 10, 100, 5227);
+    EXPECT_EQ(255, withIndels.numIndels());
+    EXPECT_GT(withIndels.numIndels(), 0);
+
+    EXPECT_THROW(StrAlign(StrAlign::Type::kSpanning, StrAlign::kMaxNumMotifs + 1, 0, 0), std::runtime_error);
+}

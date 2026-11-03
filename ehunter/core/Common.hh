@@ -46,6 +46,17 @@ enum class Sex
     kFemale
 };
 
+// Read model used to collect and interpret reads:
+//  kPaired: Illumina-style paired-end short reads (original ExpansionHunter behaviour)
+//  kAny:    additionally accepts unpaired reads (single-end short reads and long reads)
+enum class ReadMode
+{
+    kPaired,
+    kAny
+};
+
+std::ostream& operator<<(std::ostream& out, ReadMode readMode);
+
 enum class ChromType
 {
     kX,

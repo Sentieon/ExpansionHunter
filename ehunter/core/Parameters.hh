@@ -138,6 +138,24 @@ public:
     int orientationPredictorKmerLen() const { return orientationPredictorKmerLen_; }
     int orientationPredictorMinKmerCount() const { return orientationPredictorMinKmerCount_; }
 
+    // Read model; kPaired reproduces the original paired-end-only behaviour exactly
+    ReadMode readMode() const { return readMode_; }
+    void setReadMode(ReadMode readMode) { readMode_ = readMode; }
+
+    // Minimum MAPQ of a read without a mate for it to be used as in-repeat evidence when it is not anchored
+    // to a flank by its own alignment (only used when readMode is kAny)
+    int minSingletonMapq() const { return minSingletonMapq_; }
+    void setMinSingletonMapq(int minSingletonMapq) { minSingletonMapq_ = minSingletonMapq; }
+
+    // Maximum length of the piece of a read that is aligned to a locus graph (only used when readMode is kAny)
+    int maxLocusReadLength() const { return maxLocusReadLength_; }
+    void setMaxLocusReadLength(int maxLocusReadLength) { maxLocusReadLength_ = maxLocusReadLength; }
+
+    // Probability that a read reports one motif more (or one motif fewer) than the allele that it originated from;
+    // only used when readMode is kAny (Illumina paired-end reads are genotyped with the original noise-free model)
+    double stutterRate() const { return stutterRate_; }
+    void setStutterRate(double stutterRate) { stutterRate_ = stutterRate; }
+
 private:
     int regionExtensionLength_;
     int qualityCutoffForGoodBaseCall_;
@@ -148,6 +166,10 @@ private:
     int seedAffixTrimLength_;
     int orientationPredictorKmerLen_;
     int orientationPredictorMinKmerCount_;
+    ReadMode readMode_ = ReadMode::kPaired;
+    int minSingletonMapq_ = 20;
+    int maxLocusReadLength_ = 10000;
+    double stutterRate_ = 0.05;
 };
 
 // Per-locus parameters (settable from variant catalog) controlling genotyping

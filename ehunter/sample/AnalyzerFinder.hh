@@ -58,15 +58,18 @@ struct AnalyzerBundle
     size_t locusIndex;
 };
 
+// param[in] mate Null for reads without a mate
 void processAnalyzerBundleReadPair(
     locus::LocusAnalyzer& locusAnalyzer, locus::RegionType regionType, AnalyzerInputType inputType, Read& read,
-    Read& mate, graphtools::AlignerSelector& alignerSelector);
+    Read* mate, graphtools::AlignerSelector& alignerSelector);
 
 // Enables retrieval of appropriate locus analyzers by genomic coordinates of read alignments
 class AnalyzerFinder
 {
 public:
-    AnalyzerFinder(std::vector<std::unique_ptr<locus::LocusAnalyzer>>& locusAnalyzers);
+    /// param[in] requireReadContainment If true, a read is assigned to a region only when it is fully contained in it
+    /// (original paired-end behaviour); otherwise any overlap suffices (needed for reads longer than the regions)
+    AnalyzerFinder(std::vector<std::unique_ptr<locus::LocusAnalyzer>>& locusAnalyzers, bool requireReadContainment = true);
 
     // Retrieves analyzers appropriate for the given read pair
     std::vector<AnalyzerBundle> query(
@@ -81,6 +84,7 @@ private:
     using AnalyzerIntervalTrees = std::unordered_map<int32_t, AnalyzerIntervalTree>;
 
     AnalyzerIntervalTrees intervalTrees_;
+    bool requireReadContainment_;
 };
 
 }

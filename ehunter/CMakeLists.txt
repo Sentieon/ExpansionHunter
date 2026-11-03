@@ -132,6 +132,7 @@ add_executable(UnitTests
         tests/AlignmentClassifierTest.cpp
         tests/AlignmentSummaryTest.cpp
         tests/AlleleCheckerTest.cpp
+        tests/CatalogLoadingTest.cpp
         tests/ClassifierOfAlignmentsToVariantTest.cpp
         tests/ConcurrentQueueTest.cpp
         tests/CountTableTest.cpp
@@ -140,11 +141,15 @@ add_executable(UnitTests
         tests/GenomicRegionTest.cpp
         tests/GraphAlignmentOperationsTest.cpp
         tests/GraphBlueprintTest.cpp
+        tests/GraphProjectionTest.cpp
         tests/GreedyAlignmentIntersectorTest.cpp
         tests/HighQualityBaseRunFinderTest.cpp
+        tests/IndelAwareGenotypingTest.cpp
         tests/LocusStatsTest.cpp
+        tests/ReadClippingTest.cpp
         tests/ReadSupportCalculatorTest.cpp
         tests/ReadTest.cpp
+        tests/SingleReadEvidenceTest.cpp
         tests/RegionGraphTest.cpp
         tests/RepeatAnalyzerTest.cpp
         tests/RepeatGenotypeTest.cpp

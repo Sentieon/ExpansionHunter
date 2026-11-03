@@ -61,13 +61,23 @@ public:
         const std::string& locusId, const std::string& fragmentName, const std::string& query, bool isFirstMate,
         bool isReversed, bool isMateReversed, const graphtools::GraphAlignment& alignment) override;
 
+    /// Thread safe
+    void writeUnpaired(
+        const std::string& locusId, const std::string& fragmentName, const std::string& query, bool isReversed,
+        const graphtools::GraphAlignment& alignment) override;
+
 private:
     void writeHeader();
 
     /// Thread safe
     void write(
+        const std::string& locusId, const std::string& fragmentName, const std::string& query, uint16_t samFlag,
+        const graphtools::GraphAlignment& alignment);
+
+    /// Thread safe
+    void write(
         const graphtools::ReferenceInterval& interval, const std::string& fragmentName, const std::string& query,
-        bool isFirstMate, bool isReversed, bool isMateReversed, const graphtools::GraphAlignment& alignment);
+        uint16_t samFlag, const graphtools::GraphAlignment& alignment);
 
     /// Function executed by dedicated bam writer thread
     void writeHtsAlignments();

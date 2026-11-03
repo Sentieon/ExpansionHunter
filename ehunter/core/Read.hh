@@ -40,6 +40,7 @@ using FragmentId = std::string;
 
 enum class MateNumber
 {
+    kUnpaired = 0, // Read that was sequenced without a mate (single-end short reads, long reads)
     kFirstMate = 1,
     kSecondMate = 2
 };
@@ -84,10 +85,11 @@ std::ostream& operator<<(std::ostream& out, const ReadId& readId);
 class Read
 {
 public:
-    Read(ReadId readId, std::string sequence, bool isReversed)
+    Read(ReadId readId, std::string sequence, bool isReversed, int mapq = -1)
         : readId_(std::move(readId))
         , sequence_(std::move(sequence))
         , isReversed_(isReversed)
+        , mapq_(mapq)
     {
         if (sequence_.empty())
         {
@@ -104,6 +106,9 @@ public:
 
     bool isFirstMate() const { return mateNumber() == MateNumber::kFirstMate; }
     bool isSecondMate() const { return mateNumber() == MateNumber::kSecondMate; }
+    bool isUnpaired() const { return mateNumber() == MateNumber::kUnpaired; }
+    // Mapping quality of the linear alignment that the read was extracted from; -1 if unknown
+    int mapq() const { return mapq_; }
     // Return whether the read is reverse complemented relative to its
     //  original direction during sequencing
     bool isReversed() const { return isReversed_; }
@@ -118,6 +123,7 @@ private:
     ReadId readId_;
     std::string sequence_;
     bool isReversed_;
+    int mapq_;
 };
 
 struct LinearAlignmentStats
@@ -127,6 +133,7 @@ struct LinearAlignmentStats
     int32_t mapq = -1;
     int32_t mateChromId = -1;
     int32_t matePos = -1;
+    int32_t refEnd = -1; // End of the linear alignment on the reference (0-based, half-open)
     bool isPaired = false;
     bool isMapped = false;
     bool isMateMapped = false;

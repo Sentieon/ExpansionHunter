@@ -97,4 +97,27 @@ bool LocusSpecification::requiresGenomeWideDepth() const
     return false;
 }
 
+boost::optional<GenomicRegion> LocusSpecification::readClippingRegion() const
+{
+    // As elsewhere in the program, assuming that the first and last node are flanks
+    const NodeId leftFlankId = 0;
+    const NodeId rightFlankId = regionGraph_.numNodes() - 1;
+
+    const auto leftFlankIter = referenceRegions_.find(leftFlankId);
+    const auto rightFlankIter = referenceRegions_.find(rightFlankId);
+    if (leftFlankIter == referenceRegions_.end() || rightFlankIter == referenceRegions_.end())
+    {
+        return boost::none;
+    }
+
+    const GenomicRegion& leftFlank = leftFlankIter->second;
+    const GenomicRegion& rightFlank = rightFlankIter->second;
+    if (leftFlank.contigIndex() != rightFlank.contigIndex() || leftFlank.start() >= rightFlank.end())
+    {
+        return boost::none;
+    }
+
+    return GenomicRegion(leftFlank.contigIndex(), leftFlank.start(), rightFlank.end());
+}
+
 }

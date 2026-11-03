@@ -24,6 +24,7 @@
 
 #include <string>
 
+#include "core/Common.hh"
 #include "core/ReferenceContigInfo.hh"
 
 namespace ehunter
@@ -31,6 +32,10 @@ namespace ehunter
 
 // Returns the length of the first read in a HTS file
 int extractReadLength(const std::string& htsFilePath);
+
+// Inspects the first reads of a HTS file to decide whether they are all paired-end short reads (ReadMode::kPaired)
+// or whether unpaired or long reads are present (ReadMode::kAny)
+ReadMode detectReadMode(const std::string& htsFilePath, const std::string& htsReferencePath);
 
 ReferenceContigInfo extractReferenceContigInfo(const std::string& htsFilePath);
 

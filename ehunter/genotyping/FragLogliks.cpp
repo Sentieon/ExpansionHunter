@@ -34,6 +34,8 @@
 
 #include "spdlog/spdlog.h"
 
+#include "core/LogSum.hh"
+
 using std::pair;
 using std::vector;
 
@@ -42,8 +44,17 @@ namespace ehunter
 namespace strgt
 {
 
+// Reads do not always report the number of motifs of the allele that they originated from: polymerase slippage and
+// sequencing errors inside a repeat change it, typically by one motif. The likelihood of a fragment is therefore
+// averaged over the neighboring allele sizes, weighted by the stutter rate of the sequencing technology. With a
+// stutter rate of zero this is the original (Illumina paired-end) model.
 double FragLogliks::getLoglik(int fragIndex, int alleleMotifCount)
 {
+    if (stutterRate_ <= 0)
+    {
+        return getRawLoglik(fragIndex, alleleMotifCount);
+    }
+
     const FragIndexAndNumMotifs index = { fragIndex, alleleMotifCount };
     auto queryResult = fragLogliksBySize_.find(index);
     if (queryResult != fragLogliksBySize_.end())
@@ -51,15 +62,60 @@ double FragLogliks::getLoglik(int fragIndex, int alleleMotifCount)
         return queryResult->second;
     }
 
-    int readIndex = 2 * fragIndex;
-    int mateIndex = readIndex + 1;
-    assert(mateIndex < alignMatrix_.numReads());
-    const auto& readAlign = alignMatrix_.getAlign(readIndex, alleleMotifCount);
-    const auto& mateAlign = alignMatrix_.getAlign(mateIndex, alleleMotifCount);
+    const double neighborWeight = std::log(stutterRate_);
+    double loglik = std::log(1.0 - 2 * stutterRate_) + getRawLoglik(fragIndex, alleleMotifCount);
+    loglik = getLogSum(loglik, neighborWeight + getRawLoglik(fragIndex, alleleMotifCount + 1));
+    if (alleleMotifCount > 0)
+    {
+        loglik = getLogSum(loglik, neighborWeight + getRawLoglik(fragIndex, alleleMotifCount - 1));
+    }
 
-    const double loglik = computeLoglik(readAlign, mateAlign, alleleMotifCount);
     fragLogliksBySize_[index] = loglik;
     return loglik;
+}
+
+double FragLogliks::getRawLoglik(int fragIndex, int alleleMotifCount)
+{
+    const FragIndexAndNumMotifs index = { fragIndex, alleleMotifCount };
+    auto queryResult = rawFragLogliksBySize_.find(index);
+    if (queryResult != rawFragLogliksBySize_.end())
+    {
+        return queryResult->second;
+    }
+
+    const int readIndex = alignMatrix_.fragFirstRow(fragIndex);
+    const auto& readAlign = alignMatrix_.getAlign(readIndex, alleleMotifCount);
+
+    double loglik = 0;
+    if (alignMatrix_.fragSize(fragIndex) == 2)
+    {
+        const int mateIndex = readIndex + 1;
+        assert(mateIndex < alignMatrix_.numReads());
+        const auto& mateAlign = alignMatrix_.getAlign(mateIndex, alleleMotifCount);
+        loglik = computeLoglik(readAlign, mateAlign, alleleMotifCount);
+    }
+    else
+    {
+        loglik = computeLoglik(readAlign, alleleMotifCount);
+    }
+
+    rawFragLogliksBySize_[index] = loglik;
+    return loglik;
+}
+
+// Likelihood of a read without a mate; the fragment is the read itself
+double FragLogliks::computeLoglik(const StrAlign& readAlign, int alleleMotifCount) const
+{
+    const int numPossibleOrigins = alleleMotifCount * motifLen_ + readLen_ + 1;
+    int numOriginsForThisFrag = 1;
+
+    if (readAlign.type() == StrAlign::Type::kInRepeat && readAlign.numMotifs() < alleleMotifCount)
+    {
+        numOriginsForThisFrag += alleleMotifCount - readAlign.numMotifs();
+    }
+
+    const double readAlignLoglik = readAlign.score() * std::log(1.3) - 2 * readLen_ * std::log(2.0);
+    return std::log(numOriginsForThisFrag) - std::log(numPossibleOrigins) + readAlignLoglik;
 }
 
 double FragLogliks::computeLoglik(const StrAlign& readAlign, const StrAlign& mateAlign, int alleleMotifCount) const

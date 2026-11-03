@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,14 @@ struct LocusDescriptionFromUser
     boost::optional<double> errorRate;
     boost::optional<double> likelihoodRatioThreshold;
     boost::optional<double> minLocusCoverage;
+};
+
+/// Thrown when the reference sequence of a locus's flanks is (mostly) N, for example because the locus lies in a
+/// region masked in the reference; such loci cannot be analyzed and are skipped when the catalog is loaded
+class FlanksWithNsError : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
 };
 
 void assertValidity(const LocusDescriptionFromUser& userDescription);

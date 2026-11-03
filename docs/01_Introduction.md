@@ -9,7 +9,9 @@ deletions, and substitutions.
 In order to use Expansion Hunter you need to (1) download the latest release or
 build the program from source, (2) obtain a set of files specifying repeat
 regions of interest, and (3) have a BAM or a CRAM file with alignments of reads
-from a PCR-free WGS sample.
+from a PCR-free WGS sample. The program was designed for paired-end short reads
+and also supports single-end short reads and long reads (see
+[read modes](03_Usage.md#read-modes)).
 
 The following sections will help you to get started.
 
@@ -18,3 +20,4 @@ The following sections will help you to get started.
 * [Input variant catalogs](04_VariantCatalogFiles.md)
 * [Output JSON files](05_OutputJsonFiles.md)
 * [Output VCF files](06_OutputVcfFiles.md)
+* [Single-end and long-read support](CHANGES-generalized-reads.md)

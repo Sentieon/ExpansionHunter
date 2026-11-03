@@ -34,6 +34,14 @@ void ReadPairs::Add(Read read)
     ReadPair& readPair = readPairs_[read.fragmentId()];
     const int originalMateCount = readPair.numMatesSet();
 
+    // Reads without a mate occupy the first slot of the pair
+    if (read.isUnpaired() && readPair.firstMate == boost::none)
+    {
+        readPair.firstMate = std::move(read);
+        numReads_ += readPair.numMatesSet() - originalMateCount;
+        return;
+    }
+
     if (read.isFirstMate() && readPair.firstMate == boost::none)
     {
         readPair.firstMate = std::move(read);

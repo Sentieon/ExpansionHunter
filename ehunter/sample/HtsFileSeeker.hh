@@ -31,6 +31,8 @@ extern "C"
 #include "htslib/sam.h"
 }
 
+#include <boost/optional.hpp>
+
 #include "core/GenomicRegion.hh"
 #include "core/Read.hh"
 #include "core/ReferenceContigInfo.hh"
@@ -57,6 +59,9 @@ public:
     int32_t currentMatePosition() const;
 
     Read decodeRead(LinearAlignmentStats& alignmentStats) const;
+    // Decodes the current read restricted to the part of its alignment overlapping the region (see clipReadToRegion)
+    boost::optional<Read>
+    decodeReadClippedTo(const GenomicRegion& region, int32_t maxLength, LinearAlignmentStats& alignmentStats) const;
 
 private:
     enum class Status

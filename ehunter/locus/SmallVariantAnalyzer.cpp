@@ -44,6 +44,12 @@ void SmallVariantAnalyzer::processMates(
     alignmentClassifier_.classify(mateAlignment);
 }
 
+void SmallVariantAnalyzer::processRead(const Read& /*read*/, const graphtools::GraphAlignment& readAlignment)
+{
+    alignmentStatsCalculator_.inspect(readAlignment);
+    alignmentClassifier_.classify(readAlignment);
+}
+
 int SmallVariantAnalyzer::countReadsSupportingNode(graphtools::NodeId nodeId) const
 {
     if (nodeId == ClassifierOfAlignmentsToVariant::kInvalidNodeId)

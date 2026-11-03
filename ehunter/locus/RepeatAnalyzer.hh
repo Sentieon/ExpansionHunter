@@ -43,14 +43,20 @@ namespace ehunter
 class RepeatAnalyzer : public VariantAnalyzer
 {
 public:
+    /// \param[in] readMode Reads of indel-prone technologies (single-end short reads and long reads) are only
+    /// admitted in ReadMode::kAny, where the motif count of an alignment containing indels is treated as uncertain
+    ///
+    /// \param[in] stutterRate Probability that a read reports one motif more (or fewer) than the allele it came
+    /// from; only used in ReadMode::kAny
     RepeatAnalyzer(
         std::string variantId, const graphtools::Graph& graph, graphtools::NodeId repeatNodeId,
-        GenotyperParameters genotyperParams)
+        GenotyperParameters genotyperParams, ReadMode readMode = ReadMode::kPaired, double stutterRate = 0.0)
         : VariantAnalyzer(std::move(variantId), graph, { repeatNodeId }, genotyperParams)
         , repeatUnit_(graph.nodeSeq(repeatNodeId))
         , alignmentStatsCalculator_({ repeatNodeId })
         , countOfInrepeatReadPairs_(0)
-        , alignMatrix_(repeatNodeId)
+        , stutterRate_(readMode == ReadMode::kAny ? stutterRate : 0.0)
+        , alignMatrix_(repeatNodeId, readMode == ReadMode::kAny)
     {
     }
 
@@ -58,10 +64,12 @@ public:
 
     const std::string& repeatUnit() const { return repeatUnit_; }
     void addInrepeatReadPair() { countOfInrepeatReadPairs_++; }
+    void addInrepeatRead() { countOfInrepeatReads_++; }
 
     void processMates(
         const Read& read, const graphtools::GraphAlignment& readAlignment, const Read& mate,
         const graphtools::GraphAlignment& mateAlignment) override;
+    void processRead(const Read& read, const graphtools::GraphAlignment& readAlignment) override;
 
     std::unique_ptr<VariantFindings> analyze(const LocusStats& stats) override;
 
@@ -72,6 +80,8 @@ private:
     GraphVariantAlignmentStatsCalculator alignmentStatsCalculator_;
 
     int countOfInrepeatReadPairs_;
+    int countOfInrepeatReads_ = 0;
+    double stutterRate_;
     strgt::AlignMatrix alignMatrix_;
 };
 

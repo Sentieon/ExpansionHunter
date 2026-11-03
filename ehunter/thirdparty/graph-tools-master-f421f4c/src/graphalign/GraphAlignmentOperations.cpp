@@ -25,6 +25,7 @@
 #include <boost/range/adaptor/reversed.hpp>
 
 #include "graphalign/LinearAlignmentOperations.hh"
+#include "graphalign/OperationOperations.hh"
 
 using std::list;
 using std::string;
@@ -162,34 +163,65 @@ void splitNodeCigar(const string& node_cigar, string& cigar, NodeId& node_id)
 }
 
 // Implementation note: Unless stated otherwise, all calculations are performed in path coordinates.
+// Splits the linear alignment into per-node pieces in a single pass over its operations. This produces the same
+// pieces as repeatedly calling Alignment::splitAtReferencePosition (operations that consume no reference sequence at
+// a node boundary stay with the node on the left, operations crossing a boundary are split there, and every piece
+// but the first starts at reference position 0), but in time linear in the alignment size instead of quadratic, which
+// matters for long reads spanning many repeat nodes.
 GraphAlignment projectAlignmentOntoGraph(Alignment linear_alignment, Path path)
 {
     vector<Alignment> alignments;
 
+    const uint32_t linear_alignment_reference_length = linear_alignment.referenceLength();
     path.shrinkBy(
         linear_alignment.referenceStart(),
-        path.length() - linear_alignment.referenceStart() - linear_alignment.referenceLength());
-    linear_alignment.setReferenceStart(0);
+        path.length() - linear_alignment.referenceStart() - linear_alignment_reference_length);
+
+    list<Operation> remaining_operations(linear_alignment.operations());
+    size_t remaining_reference_length = linear_alignment_reference_length;
 
     for (size_t node_index = 0; node_index != path.numNodes(); ++node_index)
     {
         const size_t last_position_of_path_on_this_node = path.getNodeOverlapLengthByIndex(node_index);
 
-        const size_t linear_alignment_last_position
-            = linear_alignment.referenceStart() + linear_alignment.referenceLength();
-
-        if (linear_alignment_last_position <= last_position_of_path_on_this_node)
+        if (remaining_reference_length <= last_position_of_path_on_this_node)
         {
-            alignments.push_back(linear_alignment);
+            alignments.emplace_back(0, std::move(remaining_operations));
             break;
         }
-        else
+
+        if (last_position_of_path_on_this_node == 0)
         {
-            Alignment suffix = linear_alignment.splitAtReferencePosition(last_position_of_path_on_this_node);
-            alignments.push_back(linear_alignment);
-            linear_alignment = suffix;
-            linear_alignment.setReferenceStart(0);
+            throw std::logic_error("Cannot split alignment at reference position 0");
         }
+
+        // Operations ending at or before the node boundary belong to this node
+        size_t used_reference_length = 0;
+        auto operation_it = remaining_operations.begin();
+        while (operation_it != remaining_operations.end()
+               && used_reference_length + operation_it->referenceLength() <= last_position_of_path_on_this_node)
+        {
+            used_reference_length += operation_it->referenceLength();
+            ++operation_it;
+        }
+
+        list<Operation> node_operations;
+        node_operations.splice(
+            node_operations.begin(), remaining_operations, remaining_operations.begin(), operation_it);
+
+        // An operation crossing the node boundary is split
+        if (used_reference_length != last_position_of_path_on_this_node)
+        {
+            const OperationPair pieces = splitByReferenceLength(
+                remaining_operations.front(),
+                static_cast<uint32_t>(last_position_of_path_on_this_node - used_reference_length));
+            node_operations.push_back(pieces.first);
+            remaining_operations.pop_front();
+            remaining_operations.push_front(pieces.second);
+        }
+
+        remaining_reference_length -= last_position_of_path_on_this_node;
+        alignments.emplace_back(0, std::move(node_operations));
     }
 
     Alignment& first_alignment = alignments.front();

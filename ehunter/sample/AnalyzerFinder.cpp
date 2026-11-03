@@ -22,6 +22,8 @@
 
 #include "sample/AnalyzerFinder.hh"
 
+#include <cassert>
+
 using boost::optional;
 using ehunter::locus::LocusAnalyzer;
 using ehunter::locus::RegionType;
@@ -160,24 +162,26 @@ void coalesceBundlesForFarawayMates(
 
 void processAnalyzerBundleReadPair(
     locus::LocusAnalyzer& locusAnalyzer, locus::RegionType regionType, AnalyzerInputType inputType, Read& read,
-    Read& mate, graphtools::AlignerSelector& alignerSelector)
+    Read* mate, graphtools::AlignerSelector& alignerSelector)
 {
 
     switch (inputType)
     {
     case AnalyzerInputType::kBothReads:
-        locusAnalyzer.processMates(read, &mate, regionType, alignerSelector);
+        locusAnalyzer.processMates(read, mate, regionType, alignerSelector);
         break;
     case AnalyzerInputType::kReadOnly:
         locusAnalyzer.processMates(read, nullptr, regionType, alignerSelector);
         break;
     case AnalyzerInputType::kMateOnly:
-        locusAnalyzer.processMates(mate, nullptr, regionType, alignerSelector);
+        assert(mate != nullptr);
+        locusAnalyzer.processMates(*mate, nullptr, regionType, alignerSelector);
         break;
     }
 }
 
-AnalyzerFinder::AnalyzerFinder(vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers)
+AnalyzerFinder::AnalyzerFinder(vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers, bool requireReadContainment)
+    : requireReadContainment_(requireReadContainment)
 {
     using IntervalWithLocusTypeAndAnalyzer = Interval<std::size_t, AnalyzerBundle>;
 
@@ -225,10 +229,40 @@ vector<AnalyzerBundle> AnalyzerFinder::query(int32_t contigIndex, int64_t start,
     {
         const bool isReadContainedInInterval = static_cast<int64_t>(intervalWithBundle.start) <= start
             && end <= static_cast<int64_t>(intervalWithBundle.stop);
-        if (isReadContainedInInterval)
+        const bool isReadOverlappingInterval
+            = static_cast<int64_t>(intervalWithBundle.start) < end && start < static_cast<int64_t>(intervalWithBundle.stop);
+
+        if (requireReadContainment_ ? isReadContainedInInterval : isReadOverlappingInterval)
         {
             analyzerBundles.push_back(intervalWithBundle.value);
         }
+    }
+
+    if (!requireReadContainment_)
+    {
+        // A long read may overlap several regions of the same locus; keep one bundle per locus, preferring target
+        vector<AnalyzerBundle> uniqueBundles;
+        for (const auto& bundle : analyzerBundles)
+        {
+            bool isDuplicate = false;
+            for (auto& uniqueBundle : uniqueBundles)
+            {
+                if (uniqueBundle.locusIndex == bundle.locusIndex)
+                {
+                    isDuplicate = true;
+                    if (bundle.regionType == RegionType::kTarget)
+                    {
+                        uniqueBundle.regionType = RegionType::kTarget;
+                    }
+                    break;
+                }
+            }
+            if (!isDuplicate)
+            {
+                uniqueBundles.push_back(bundle);
+            }
+        }
+        analyzerBundles = uniqueBundles;
     }
 
     return analyzerBundles;

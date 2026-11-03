@@ -24,7 +24,7 @@
 
 #include <memory>
 
-#include "absl/container/flat_hash_set.h"
+#include "absl/container/flat_hash_map.h"
 #include "spdlog/spdlog.h"
 #include <boost/optional.hpp>
 
@@ -36,6 +36,7 @@
 #include "sample/HtsFileStreamer.hh"
 #include "sample/HtsStreamingReadPairQueue.hh"
 
+using boost::optional;
 using ehunter::locus::initializeLocusAnalyzers;
 using ehunter::locus::LocusAnalyzer;
 using graphtools::AlignmentWriter;
@@ -96,8 +97,9 @@ void processLocusAnalyzerQueue(
             {
                 break;
             }
+            Read* matePtr = readPair->mate ? &*readPair->mate : nullptr;
             processAnalyzerBundleReadPair(
-                locusAnalyzer, readPair->regionType, readPair->inputType, readPair->read, readPair->mate,
+                locusAnalyzer, readPair->regionType, readPair->inputType, readPair->read, matePtr,
                 *locusAnalyzerThreadData.alignerSelectorPtr);
         }
     }
@@ -205,12 +207,26 @@ void analyzeLocus(
     }
 }
 
+/// A read waiting for its mate to be streamed. The linear alignment is retained so that the read can be clipped to
+/// each locus it is sent to (only needed in ReadMode::kAny; the cigar is left empty otherwise)
+struct PendingRead
+{
+    Read read;
+    int32_t contigId;
+    int64_t pos;
+    int64_t endPos;
+    vector<uint32_t> cigar;
+};
+
 }
 
 SampleFindings htsStreamingSampleAnalysis(
     const InputPaths& inputPaths, Sex sampleSex, const HeuristicParameters& heuristicParams, const int threadCount,
     const RegionCatalog& regionCatalog, locus::AlignWriterPtr bamletWriter)
 {
+    const ReadMode readMode = heuristicParams.readMode();
+    const int32_t maxReadLength = heuristicParams.maxLocusReadLength();
+
     // Setup thread-specific data structures and thread pool
     const unsigned maxActiveLocusAnalyzerQueues(threadCount + 5);
     const unsigned locusAnalyzerCount(regionCatalog.size());
@@ -228,14 +244,32 @@ SampleFindings htsStreamingSampleAnalysis(
     graphtools::AlignerSelector alignerSelector(heuristicParams.alignerType());
     locusAnalyzerThreadSharedData.locusAnalyzers
         = initializeLocusAnalyzers(regionCatalog, heuristicParams, bamletWriter, threadCount);
-    GenomeQueryCollection genomeQuery(locusAnalyzerThreadSharedData.locusAnalyzers);
+    GenomeQueryCollection genomeQuery(locusAnalyzerThreadSharedData.locusAnalyzers, readMode == ReadMode::kPaired);
+
+    // Reference spans that reads are clipped to before being sent to each locus (ReadMode::kAny only)
+    vector<optional<GenomicRegion>> clipRegions;
+    if (readMode == ReadMode::kAny)
+    {
+        for (const auto& locusSpec : regionCatalog)
+        {
+            clipRegions.push_back(locusSpec.readClippingRegion());
+        }
+    }
 
     spdlog::info("Streaming reads");
 
-    auto ReadHash = [](const Read& read) { return std::hash<std::string>()(read.fragmentId()); };
-    auto ReadEq = [](const Read& read1, const Read& read2) { return (read1.fragmentId() == read2.fragmentId()); };
-    using ReadCatalog = absl::flat_hash_set<Read, decltype(ReadHash), decltype(ReadEq)>;
-    ReadCatalog unpairedReads(1000, ReadHash, ReadEq);
+    using PendingReadCatalog = absl::flat_hash_map<string, PendingRead>;
+    PendingReadCatalog unpairedReads(1000);
+
+    auto sendReadPair = [&](const AnalyzerBundle& bundle, HtsStreamingReadPairQueue::ReadPair readPair)
+    {
+        if (locusAnalyzerThreadSharedData.readPairQueue.insertReadPair(bundle.locusIndex, std::move(readPair)))
+        {
+            pool.push(
+                processLocusAnalyzerQueue, std::ref(locusAnalyzerThreadSharedData),
+                std::ref(locusAnalyzerThreadLocalDataPool), bundle.locusIndex);
+        }
+    };
 
     const unsigned htsDecompressionThreads(std::min(threadCount, 12));
     htshelpers::HtsFileStreamer readStreamer(inputPaths.htsFile(), inputPaths.reference(), htsDecompressionThreads);
@@ -247,8 +281,13 @@ SampleFindings htsStreamingSampleAnalysis(
             break;
         }
 
-        const bool isReadNearTargetRegion = genomeQuery.targetRegionMask.query(
-            readStreamer.currentReadContigId(), readStreamer.currentReadPosition());
+        const int32_t readContigId = readStreamer.currentReadContigId();
+        const int64_t readPos = readStreamer.currentReadPosition();
+        const int64_t readEndPos = std::max<int64_t>(readStreamer.currentReadEndPosition(), readPos + 1);
+
+        const bool isReadNearTargetRegion = readMode == ReadMode::kPaired
+            ? genomeQuery.targetRegionMask.query(readContigId, readPos)
+            : genomeQuery.targetRegionMask.queryRange(readContigId, readPos, readEndPos);
         const bool isMateNearTargetRegion = genomeQuery.targetRegionMask.query(
             readStreamer.currentMateContigId(), readStreamer.currentMatePosition());
         if (!isReadNearTargetRegion && !isMateNearTargetRegion)
@@ -258,47 +297,100 @@ SampleFindings htsStreamingSampleAnalysis(
 
         if (not readStreamer.currentIsPaired())
         {
+            if (readMode == ReadMode::kPaired)
+            {
+                continue;
+            }
+
+            // Read sequenced without a mate: send it to every locus it overlaps
+            vector<AnalyzerBundle> analyzerBundles
+                = genomeQuery.analyzerFinder.query(readContigId, readPos, readEndPos);
+            for (const auto& bundle : analyzerBundles)
+            {
+                const auto& clipRegion = clipRegions[bundle.locusIndex];
+                optional<Read> read = clipRegion ? readStreamer.decodeReadClippedTo(*clipRegion, maxReadLength)
+                                                 : optional<Read>(readStreamer.decodeRead());
+                if (read)
+                {
+                    sendReadPair(
+                        bundle, { bundle.regionType, AnalyzerInputType::kReadOnly, std::move(*read), boost::none });
+                }
+            }
             continue;
         }
 
         Read read = readStreamer.decodeRead();
-        const auto mateIterator = unpairedReads.find(read);
+        const auto mateIterator = unpairedReads.find(read.fragmentId());
         if (mateIterator == unpairedReads.end())
         {
-            unpairedReads.emplace(std::move(read));
+            const string fragmentId = read.fragmentId();
+            vector<uint32_t> cigar = readMode == ReadMode::kAny ? readStreamer.currentCigar() : vector<uint32_t>();
+            unpairedReads.emplace(
+                fragmentId, PendingRead { std::move(read), readContigId, readPos, readEndPos, std::move(cigar) });
             continue;
         }
-        Read mate = std::move(*mateIterator);
+        PendingRead mate = std::move(mateIterator->second);
         unpairedReads.erase(mateIterator);
 
-        const int64_t readEnd = readStreamer.currentReadPosition() + read.sequence().length();
-        const int64_t mateEnd = readStreamer.currentMatePosition() + mate.sequence().length();
+        int64_t readEnd = readPos + read.sequence().length();
+        int64_t mateEnd = readStreamer.currentMatePosition() + mate.read.sequence().length();
+        if (readMode == ReadMode::kAny)
+        {
+            readEnd = readEndPos;
+            mateEnd = mate.endPos;
+        }
 
         vector<AnalyzerBundle> analyzerBundles = genomeQuery.analyzerFinder.query(
-            readStreamer.currentReadContigId(), readStreamer.currentReadPosition(), readEnd,
-            readStreamer.currentMateContigId(), readStreamer.currentMatePosition(), mateEnd);
+            readContigId, readPos, readEnd, readStreamer.currentMateContigId(), readStreamer.currentMatePosition(),
+            mateEnd);
 
         const unsigned bundleCount(analyzerBundles.size());
         for (unsigned bundleIndex(0); bundleIndex < bundleCount; ++bundleIndex)
         {
             auto& bundle(analyzerBundles[bundleIndex]);
-            auto sendReadPair = [&](HtsStreamingReadPairQueue::ReadPair readPair)
-            {
-                if (locusAnalyzerThreadSharedData.readPairQueue.insertReadPair(bundle.locusIndex, std::move(readPair)))
-                {
-                    pool.push(
-                        processLocusAnalyzerQueue, std::ref(locusAnalyzerThreadSharedData),
-                        std::ref(locusAnalyzerThreadLocalDataPool), bundle.locusIndex);
-                }
-            };
 
-            if ((bundleIndex + 1) < bundleCount)
+            if (readMode == ReadMode::kPaired)
             {
-                sendReadPair({ bundle.regionType, bundle.inputType, read, mate });
+                if ((bundleIndex + 1) < bundleCount)
+                {
+                    sendReadPair(bundle, { bundle.regionType, bundle.inputType, read, mate.read });
+                }
+                else
+                {
+                    sendReadPair(
+                        bundle, { bundle.regionType, bundle.inputType, std::move(read), std::move(mate.read) });
+                }
+                continue;
             }
-            else
+
+            // Clip both mates to the locus before sending them; a mate whose overlapping piece is empty is dropped
+            const auto& clipRegion = clipRegions[bundle.locusIndex];
+            optional<Read> clippedRead = read;
+            optional<Read> clippedMate = mate.read;
+            if (clipRegion)
             {
-                sendReadPair({ bundle.regionType, bundle.inputType, std::move(read), std::move(mate) });
+                clippedRead = htshelpers::clipReadToRegion(
+                    read, readContigId, readPos, readStreamer.currentCigar(), *clipRegion, maxReadLength);
+                clippedMate = htshelpers::clipReadToRegion(
+                    mate.read, mate.contigId, mate.pos, mate.cigar, *clipRegion, maxReadLength);
+            }
+
+            if (clippedRead && clippedMate)
+            {
+                sendReadPair(
+                    bundle, { bundle.regionType, bundle.inputType, std::move(*clippedRead), std::move(clippedMate) });
+            }
+            else if (clippedRead && bundle.inputType != AnalyzerInputType::kMateOnly)
+            {
+                sendReadPair(
+                    bundle,
+                    { bundle.regionType, AnalyzerInputType::kReadOnly, std::move(*clippedRead), boost::none });
+            }
+            else if (clippedMate && bundle.inputType != AnalyzerInputType::kReadOnly)
+            {
+                sendReadPair(
+                    bundle,
+                    { bundle.regionType, AnalyzerInputType::kReadOnly, std::move(*clippedMate), boost::none });
             }
         }
     }

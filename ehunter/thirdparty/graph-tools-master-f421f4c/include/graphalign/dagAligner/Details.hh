@@ -42,8 +42,11 @@ namespace graphalign
 namespace dagAligner
 {
 
-    typedef signed short Score;
-    static const Score SCORE_MIN = std::numeric_limits<Score>::min();
+    // 32-bit scores: with 16 bits the score of a query longer than ~6.5 kb (5 per matching base) wraps around, which
+    // silently corrupts long-read alignments. Scores of alignments that fit into 16 bits are unchanged.
+    typedef int32_t Score;
+    // Half of the type minimum so that adding penalties to unreachable cells cannot overflow
+    static const Score SCORE_MIN = std::numeric_limits<Score>::min() / 2;
 
     /**
      * \brief Contains information about graph edges between the target sequence characters

@@ -18,4 +18,5 @@ target_sources(UnitTests # Requires CMake 3.13 or later
         IrrPairFinderTest.cpp
         LocusAlignerTest.cpp
         LocusAnalyzerTest.cpp
+        LocusAnalyzerSingleReadTest.cpp
         )
