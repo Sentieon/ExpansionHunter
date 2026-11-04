@@ -1,4 +1,4 @@
-# Expansion Hunter: a tool for estimating repeat sizes
+# Expansion Hunter: a tool for estimating repeat sizes from paired-end, single-end, and long-read NGS data
 
 There are a number of regions in the human genome consisting of repetitions of
 short unit sequence (commonly a trimer). Such repeat regions can expand to a
